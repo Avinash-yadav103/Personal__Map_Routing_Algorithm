@@ -615,7 +615,7 @@
         }
 
         // Enhanced path highlighting function
-        function highlightPath(path) {
+        function highlightPath(path, pickupNodes, destinationNodes) {
             // Clear existing highlights
             const nodes = document.querySelectorAll('.node');
             const edges = document.querySelectorAll('.edge, .edge-diagonal');
@@ -625,7 +625,11 @@
                 existingPathLines.remove();
             }
             
-            nodes.forEach(node => node.classList.remove('node-in-path'));
+            nodes.forEach(node => {
+                node.classList.remove('node-in-path');
+                node.classList.remove('pickup-node');
+                node.classList.remove('dropoff-node');
+            });
             edges.forEach(edge => edge.classList.remove('edge-in-path'));
             
             // Create SVG container for path lines
@@ -642,16 +646,30 @@
             
             // Highlight nodes in the path and collect their positions
             const nodePositions = [];
-            for (const nodeId of path) {
+            for (let i = 0; i < path.length; i++) {
+                const nodeId = path[i];
+                
+                // Determine if this is a pickup or dropoff
+                const isPickup = pickupNodes && pickupNodes.includes(nodeId);
+                const isDropoff = destinationNodes && destinationNodes.includes(nodeId + 100);
+                
                 nodes.forEach(nodeElem => {
                     if (nodeElem.textContent == nodeId) {
                         nodeElem.classList.add('node-in-path');
+                        
+                        if (isPickup) {
+                            nodeElem.classList.add('pickup-node');
+                        } else if (isDropoff) {
+                            nodeElem.classList.add('dropoff-node');
+                        }
+                        
                         const position = nodePlacements[nodeId];
                         if (position) {
                             nodePositions.push({
                                 id: nodeId,
                                 x: position.left + 20, // Center of node
-                                y: position.top + 20   // Center of node
+                                y: position.top + 20,  // Center of node
+                                type: isPickup ? 'pickup' : (isDropoff ? 'dropoff' : 'regular')
                             });
                         }
                     }
@@ -909,12 +927,17 @@
         // Function to calculate the optimal route using TSP
         function calculateOptimalRoute(userIds) {
             const outputDiv = document.getElementById('output');
-            outputDiv.innerHTML = `<p>Calculating optimal route for ${userIds.length} users...</p>`;
+            outputDiv.innerHTML = `
+                <div class="loading-container">
+                    <p>Calculating optimal pickup and dropoff route for ${userIds.length} users...</p>
+                    <div class="loading-spinner"></div>
+                </div>
+            `;
             
             try {
-                // Calculate TSP route (simplified nearest neighbor approach)
+                // Calculate TSP route with separate pickup and destination nodes
                 const result = calculateClientSideTsp(userIds);
-                displayTspResults(result.path, result.userDetails);
+                displayTspResults(result.path, result.userDetails, result.pickupNodes, result.destinationNodes);
                 
             } catch (error) {
                 console.error("Error calculating TSP route:", error);
@@ -924,69 +947,164 @@
 
         // Client-side TSP calculation using nearest neighbor algorithm
         function calculateClientSideTsp(userIds) {
-            // Extract user details
-            const userDetails = userIds.map(id => ({
-                id: id,
-                name: userInfo[id].name,
-                pickup: userInfo[id].pickup,
-                destination: userInfo[id].destination
-            }));
+            // Create separate nodes for pickups and destinations
+            const pickupNodes = [];
+            const destinationNodes = [];
+            const userDetails = [];
             
-            // Use nearest neighbor algorithm for TSP
-            const path = [];
-            const visited = new Set();
-            let current = userIds[0]; // Start with the first user
-            path.push(current);
-            visited.add(current);
+            // Map to track which pickup corresponds to which destination
+            const pickupToDestMap = new Map();
+            const nodeToUserMap = new Map();
             
-            // Find path visiting all users
-            while (visited.size < userIds.length) {
-                let nearest = null;
-                let minDistance = Infinity;
+            // Generate unique IDs for pickup and destination nodes
+            userIds.forEach(userId => {
+                // Use userId for pickup and userId+100 for destination to distinguish them
+                const pickupId = userId;
+                const destId = userId + 100;
                 
-                // Find the nearest unvisited user
-                for (const userId of userIds) {
-                    if (!visited.has(userId)) {
-                        // Get shortest path between current and this user
-                        const distance = estimateDistance(current, userId);
-                        if (distance < minDistance) {
-                            minDistance = distance;
-                            nearest = userId;
-                        }
+                pickupNodes.push(pickupId);
+                destinationNodes.push(destId);
+                
+                // Track which pickup corresponds to which destination
+                pickupToDestMap.set(pickupId, destId);
+                
+                // Track which node belongs to which user
+                nodeToUserMap.set(pickupId, userId);
+                nodeToUserMap.set(destId, userId);
+                
+                // Store user details
+                userDetails.push({
+                    id: userId,
+                    name: userInfo[userId].name,
+                    pickup: userInfo[userId].pickup,
+                    destination: userInfo[userId].destination,
+                    pickupId: pickupId,
+                    destId: destId
+                });
+            });
+            
+            // Combined array of all nodes (both pickup and destination)
+            const allNodes = [...pickupNodes, ...destinationNodes];
+            
+            // Calculate a complete distance matrix between all nodes
+            const distanceMatrix = calculateDistanceMatrix(allNodes);
+            
+            // Initialize the path with the first pickup
+            const path = [pickupNodes[0]];
+            const visited = new Set([pickupNodes[0]]);
+            const pickedUpUsers = new Set(); // Track which users have been picked up
+            
+            let current = pickupNodes[0];
+            pickedUpUsers.add(nodeToUserMap.get(current));
+            
+            // Continue until all nodes are visited
+            while (visited.size < allNodes.length) {
+                let next = null;
+                let minDist = Infinity;
+                
+                // Determine the next node to visit
+                for (const node of allNodes) {
+                    if (visited.has(node)) continue;
+                    
+                    // Check if this is a destination node
+                    const isDestination = destinationNodes.includes(node);
+                    
+                    if (isDestination) {
+                        // Only consider destination if we've already picked up this user
+                        const originalUserId = nodeToUserMap.get(node);
+                        if (!pickedUpUsers.has(originalUserId)) continue;
+                    } else {
+                        // This is a pickup node
+                        const pickupId = node;
+                        const destId = pickupToDestMap.get(pickupId);
+                        
+                        // Skip if we've already visited this pickup's destination
+                        if (visited.has(destId)) continue;
+                    }
+                    
+                    // Calculate the distance between current and candidate node
+                    const dist = estimateDistanceBetweenNodes(current, node);
+                    
+                    if (dist < minDist) {
+                        minDist = dist;
+                        next = node;
                     }
                 }
                 
-                if (nearest !== null) {
-                    // Get shortest path between current and nearest
-                    const subPath = findShortestPath(current, nearest);
-                    // Add path except first node (to avoid duplication)
+                if (next !== null) {
+                    // Get the actual path between these nodes
+                    const subPath = findShortestPath(current, next);
+                    
+                    // Add subpath to main path (skipping the first node to avoid duplication)
                     for (let i = 1; i < subPath.length; i++) {
                         path.push(subPath[i]);
                     }
-                    current = nearest;
-                    visited.add(nearest);
+                    
+                    // Update tracking
+                    current = next;
+                    visited.add(next);
+                    
+                    // If this is a pickup node, mark the user as picked up
+                    if (pickupNodes.includes(next)) {
+                        const userId = nodeToUserMap.get(next);
+                        pickedUpUsers.add(userId);
+                    }
+                } else {
+                    // No valid next node found - shouldn't happen with valid data
+                    console.error("No valid next node found in TSP calculation");
+                    break;
                 }
             }
             
-            return { path, userDetails };
+            return { path, userDetails, pickupNodes, destinationNodes };
         }
 
-        // Estimate distance between two nodes for TSP
-        function estimateDistance(start, end) {
-            // Use simple direct distance for estimation
-            const startPos = nodePlacements[start];
-            const endPos = nodePlacements[end];
+        // Calculate distances between all nodes
+        function calculateDistanceMatrix(nodes) {
+            const matrix = {};
             
-            if (!startPos || !endPos) return 100; // Default large distance
+            for (const source of nodes) {
+                matrix[source] = {};
+                
+                for (const target of nodes) {
+                    if (source === target) {
+                        matrix[source][target] = 0;
+                        continue;
+                    }
+                    
+                    const distance = estimateDistanceBetweenNodes(source, target);
+                    matrix[source][target] = distance;
+                }
+            }
             
+            return matrix;
+        }
+
+        // Estimate distance between any two nodes (including virtual destination nodes)
+        function estimateDistanceBetweenNodes(start, end) {
+            // Handle destination nodes (which have IDs > 100)
+            const realStartId = start > 100 ? start - 100 : start;
+            const realEndId = end > 100 ? end - 100 : end;
+            
+            // Get node positions
+            const startPos = nodePlacements[realStartId];
+            const endPos = nodePlacements[realEndId];
+            
+            if (!startPos || !endPos) return 1000; // Default large distance for unknown nodes
+            
+            // Calculate Euclidean distance
             return Math.sqrt(
                 Math.pow(endPos.left - startPos.left, 2) +
                 Math.pow(endPos.top - startPos.top, 2)
             );
         }
 
-        // Find shortest path between two nodes for TSP
+        // Find shortest path between two nodes (including between pickup and destination)
         function findShortestPath(start, end) {
+            // Handle destination nodes (which have IDs > 100)
+            const realStart = start > 100 ? start - 100 : start;
+            const realEnd = end > 100 ? end - 100 : end;
+            
             // Use Dijkstra's algorithm to find the path
             const distances = {};
             const previous = {};
@@ -997,7 +1115,7 @@
                 previous[node] = null;
                 unvisited.push(node);
             }
-            distances[start] = 0;
+            distances[realStart] = 0;
             
             while (unvisited.length > 0) {
                 let minNode = unvisited[0];
@@ -1009,7 +1127,7 @@
                 
                 unvisited.splice(unvisited.indexOf(minNode), 1);
                 
-                if (minNode === end || distances[minNode] === Infinity) {
+                if (minNode === realEnd || distances[minNode] === Infinity) {
                     break;
                 }
                 
@@ -1022,18 +1140,22 @@
                 }
             }
             
+            // Construct path
             const path = [];
-            let current = end;
+            let current = realEnd;
             while (current !== null) {
-                path.unshift(current);
-                current = previous[current];
+                path.unshift(current === realEnd ? end : current); // Use original end node ID
+                current = current === realStart ? null : previous[current];
+            }
+            
+            if (realStart !== start && path[0] !== start) {
+                path[0] = start; // Use original start node ID
             }
             
             return path;
         }
 
-        // Display TSP results
-        function displayTspResults(path, userDetails) {
+        function displayTspResults(path, userDetails, pickupNodes, destinationNodes) {
             const outputDiv = document.getElementById('output');
             
             // If no path was found
@@ -1042,26 +1164,99 @@
                 return;
             }
             
-            // Calculate total distance of the path
+            // Calculate total distance and create a more descriptive path representation
             let totalDistance = 0;
+            let descriptivePath = [];
+            let journeySteps = [];
+            
+            // Create a map to easily look up user details
+            const userMap = new Map();
+            userDetails.forEach(user => {
+                userMap.set(user.id, user);
+                userMap.set(user.pickupId, { ...user, type: "pickup" });
+                userMap.set(user.destId, { ...user, type: "destination" });
+            });
+            
+            // Status tracking for each user
+            const userStatus = new Map();
+            userDetails.forEach(user => {
+                userStatus.set(user.id, "waiting"); // waiting -> picked_up -> dropped_off
+            });
+            
+            // Build journey steps
             for (let i = 0; i < path.length - 1; i++) {
                 const currentNode = path[i];
                 const nextNode = path[i + 1];
                 
-                // Find the edge weight
-                for (const edge of graph[currentNode]) {
-                    if (edge.node === nextNode) {
-                        totalDistance += edge.weight;
+                // Determine if current node is pickup or dropoff
+                const isPickup = pickupNodes.includes(currentNode);
+                const isDropoff = !isPickup && destinationNodes.includes(currentNode);
+                
+                // Find the user associated with this node
+                let nodeUser;
+                let nodeType = "regular";
+                
+                if (isPickup) {
+                    const userId = currentNode;
+                    nodeUser = userMap.get(userId);
+                    nodeType = "pickup";
+                    userStatus.set(userId, "picked_up");
+                    descriptivePath.push(`Pick up ${nodeUser.name}`);
+                } else if (isDropoff) {
+                    const userId = currentNode - 100; // Convert back to original user ID
+                    nodeUser = userMap.get(userId);
+                    nodeType = "dropoff";
+                    userStatus.set(userId, "dropped_off");
+                    descriptivePath.push(`Drop off ${nodeUser.name}`);
+                } else {
+                    descriptivePath.push(`Node ${currentNode}`);
+                }
+                
+                // Calculate segment distance
+                let segmentDistance = 0;
+                for (const edge of graph[currentNode < 100 ? currentNode : currentNode - 100]) {
+                    if (edge.node === (nextNode < 100 ? nextNode : nextNode - 100)) {
+                        segmentDistance = edge.weight;
+                        totalDistance += segmentDistance;
                         break;
                     }
                 }
+                
+                // Add journey step
+                journeySteps.push({
+                    fromNode: currentNode,
+                    toNode: nextNode,
+                    nodeType: nodeType,
+                    user: nodeUser,
+                    distance: segmentDistance,
+                    isPickup: isPickup,
+                    isDropoff: isDropoff
+                });
+            }
+            
+            // Handle the last node
+            const lastNode = path[path.length - 1];
+            if (pickupNodes.includes(lastNode)) {
+                const userId = lastNode;
+                const user = userMap.get(userId);
+                userStatus.set(userId, "picked_up");
+                descriptivePath.push(`Pick up ${user.name}`);
+            } else if (destinationNodes.includes(lastNode)) {
+                const userId = lastNode - 100;
+                const user = userMap.get(userId);
+                userStatus.set(userId, "dropped_off");
+                descriptivePath.push(`Drop off ${user.name}`);
             }
             
             // Create user summaries
             let userSummaries = '';
             for (const user of userDetails) {
+                const status = userStatus.get(user.id);
+                const statusClass = status === "waiting" ? "status-waiting" :
+                                   status === "picked_up" ? "status-active" : "status-completed";
+                
                 userSummaries += `
-                    <div class="user-summary">
+                    <div class="user-summary ${statusClass}">
                         <h4>${user.name} (Node ${user.id})</h4>
                         <div class="address-line">
                             <strong>Pickup:</strong> ${user.pickup}
@@ -1069,51 +1264,69 @@
                         <div class="address-line">
                             <strong>Destination:</strong> ${user.destination}
                         </div>
+                        <div class="user-status ${statusClass}">
+                            ${status.replace("_", " ")}
+                        </div>
                     </div>
                 `;
             }
             
-            // Create path segments display
+            // Create detailed journey visualization
             let pathSegments = '';
-            for (let i = 0; i < path.length - 1; i++) {
-                const currentNode = path[i];
-                const nextNode = path[i + 1];
+            for (const step of journeySteps) {
+                const fromNode = step.fromNode;
+                const toNode = step.toNode;
                 
-                // Find the edge weight
-                let segmentDistance = 0;
-                for (const edge of graph[currentNode]) {
-                    if (edge.node === nextNode) {
-                        segmentDistance = edge.weight;
-                        break;
-                    }
+                let stepDescription = '';
+                let nodeClass = '';
+                
+                if (step.isPickup) {
+                    stepDescription = `<div class="step-action pickup">Pick up ${step.user.name}</div>`;
+                    nodeClass = 'pickup-node';
+                } else if (step.isDropoff) {
+                    stepDescription = `<div class="step-action dropoff">Drop off ${step.user.name}</div>`;
+                    nodeClass = 'dropoff-node';
                 }
                 
                 pathSegments += `
-                    <div class="path-segment">
+                    <div class="path-segment ${nodeClass}">
+                        ${stepDescription}
                         <div class="segment-nodes">
                             <div class="node-info">
-                                <div class="node-id">Node ${currentNode}</div>
-                                <div class="node-name">${userInfo[currentNode] ? userInfo[currentNode].name : 'Unknown'}</div>
+                                <div class="node-id">Node ${fromNode < 100 ? fromNode : fromNode - 100}</div>
+                                <div class="node-name">${userInfo[fromNode < 100 ? fromNode : fromNode - 100]?.name || 'Unknown'}</div>
                             </div>
                             <div class="arrow">→</div>
                             <div class="node-info">
-                                <div class="node-id">Node ${nextNode}</div>
-                                <div class="node-name">${userInfo[nextNode] ? userInfo[nextNode].name : 'Unknown'}</div>
+                                <div class="node-id">Node ${toNode < 100 ? toNode : toNode - 100}</div>
+                                <div class="node-name">${userInfo[toNode < 100 ? toNode : toNode - 100]?.name || 'Unknown'}</div>
                             </div>
                         </div>
-                        <div class="segment-distance">Distance: ${segmentDistance} units</div>
+                        <div class="segment-distance">Distance: ${step.distance} units</div>
                     </div>
                 `;
             }
             
             // Display the complete TSP results
             outputDiv.innerHTML = `
-                <h2>Optimal Multi-User Route</h2>
+                <h2>Optimal Pickup & Dropoff Route</h2>
                 
                 <div class="result-summary">
                     <p><strong>Number of Users:</strong> ${userDetails.length}</p>
-                    <p><strong>Total Route Length:</strong> ${totalDistance} units</p>
-                    <p><strong>Complete Path:</strong> ${path.join(' → ')}</p>
+                    <p><strong>Total Stops:</strong> ${pickupNodes.length + destinationNodes.length}</p>
+                    <p><strong>Total Route Length:</strong> ${totalDistance.toFixed(1)} units</p>
+                </div>
+                
+                <div class="journey-overview">
+                    <h3>Journey Overview:</h3>
+                    <div class="journey-path">
+                        ${descriptivePath.map((step, i) => 
+                            `<div class="journey-step">
+                                <div class="step-number">${i+1}</div>
+                                <div class="step-text">${step}</div>
+                            </div>`
+                        ).join('')}
+                    </div>
                 </div>
                 
                 <div class="users-section">
@@ -1130,12 +1343,25 @@
                 
                 <div class="algorithm-explanation">
                     <h3>Algorithm Execution:</h3>
-                    <p>The Traveling Salesman Problem (TSP) algorithm calculated the optimal route to visit all users, minimizing the total travel distance.</p>
+                    <p>The algorithm calculated the optimal route by:</p>
+                    <ol>
+                        <li>Starting from the first user's pickup location</li>
+                        <li>Finding the best sequence of pickups and dropoffs</li>
+                        <li>Ensuring each user is picked up before being dropped off</li>
+                        <li>Minimizing the total travel distance across all stops</li>
+                    </ol>
                 </div>
             `;
             
+            // Create a path that includes both pickup and destination nodes
+            const visualPath = [];
+            for (const nodeId of path) {
+                // For visualization, use the real node IDs (not the virtual ones)
+                visualPath.push(nodeId < 100 ? nodeId : nodeId - 100);
+            }
+            
             // Highlight the path in the visualization
-            highlightPath(path);
+            highlightPath(visualPath, pickupNodes, destinationNodes);
         }
     </script>
 </body>
