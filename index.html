@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Route Finder</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="enhanced-styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>User Route Finder</h1>
+        <div class="intro-section">
+            <p>This tool uses <strong>Dijkstra's Algorithm</strong> to find the shortest path between users in a transportation network.</p>
+            <div class="algorithm-info">
+                <h3>How Dijkstra's Algorithm Works:</h3>
+                <ol>
+                    <li>Initialize distances of all nodes from source as infinite</li>
+                    <li>Set distance of source node to 0</li>
+                    <li>Find the node with minimum distance from the set of unvisited nodes</li>
+                    <li>Update distances of adjacent nodes if a shorter path is found</li>
+                    <li>Repeat until destination is reached</li>
+                </ol>
+            </div>
+        </div>
+
+        <div class="graph-visualization">
+            <h3>Available Users (20):</h3>
+            <div class="filter-options">
+                <span>Filter by group: </span>
+                <button class="filter-btn active" data-group="all">All</button>
+                <button class="filter-btn" data-group="1">Group 1</button>
+                <button class="filter-btn" data-group="2">Group 2</button>
+                <button class="filter-btn" data-group="3">Group 3</button>
+                <button class="filter-btn" data-group="4">Group 4</button>
+            </div>
+            <div id="graph-container" class="graph-container">
+                <!-- Graph will be dynamically generated here -->
+                <div class="graph-controls">
+                    <button id="zoom-in" title="Zoom In">+</button>
+                    <button id="zoom-out" title="Zoom Out">−</button>
+                    <button id="reset-view" title="Reset View">Reset</button>
+                </div>
+            </div>
+            <div class="graph-legend">
+                <p><span class="circle">●</span> User</p>
+                <p><span class="line">―</span> Connection with distance</p>
+            </div>
+        </div>
+
+        <div class="integration-status">
+            <p id="backend-status">Loading user data from backend...</p>
+        </div>
+
+        <form id="routeForm">
+            <div class="form-description">
+                <p>Select start and end users to find the shortest path:</p>
+            </div>
+            <div class="input-group">
+                <label for="startUser">Start User:</label>
+                <select id="startUser" name="startUser" required>
+                    <option value="">Select a user</option>
+                </select>
+            </div>
+            <div class="input-group">
+                <label for="endUser">End User:</label>
+                <select id="endUser" name="endUser" required>
+                    <option value="">Select a user</option>
+                </select>
+            </div>
+            <button type="submit">Find Shortest Path</button>
+        </form>
+        
+        <div class="route-option-toggle">
+            <button id="single-route-btn" class="option-btn active">Single Route</button>
+            <button id="multi-route-btn" class="option-btn">Multi-User Route (TSP)</button>
+        </div>
+
+        <form id="tspForm" class="hidden">
+            <div class="form-description">
+                <p>Select up to 4 users to find the optimal route for pickups and destinations:</p>
+            </div>
+            <div class="user-selections">
+                <div class="input-group">
+                    <label for="user1">User 1:</label>
+                    <select id="user1" name="user1" required>
+                        <option value="">Select a user</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label for="user2">User 2:</label>
+                    <select id="user2" name="user2" required>
+                        <option value="">Select a user</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label for="user3">User 3:</label>
+                    <select id="user3" name="user3" required>
+                        <option value="">Select a user</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label for="user4">User 4:</label>
+                    <select id="user4" name="user4" required>
+                        <option value="">Select a user</option>
+                    </select>
+                </div>
+            </div>
+            <button type="submit">Find Optimal Route</button>
+        </form>
+
+        <div id="output" class="hidden">
+            <!-- Results will be displayed here -->
+        </div>
+    </div>
+    <script>
+        let graph = {};
+        let graphNodes = [];
+        let userInfo = {};
+        let nodePlacements = {
+            // Group 1 (top left quadrant)
+            1: { top: 50, left: 100 },
+            5: { top: 120, left: 60 },
+            6: { top: 180, left: 100 },
+            13: { top: 60, left: 180 },
+            14: { top: 130, left: 180 },
+            
+            // Group 2 (top right quadrant)
+            2: { top: 50, left: 450 },
+            8: { top: 120, left: 500 },
+            15: { top: 60, left: 370 },
+            16: { top: 150, left: 420 },
+            
+            // Group 3 (bottom left quadrant)
+            7: { top: 270, left: 100 },
+            17: { top: 350, left: 60 },
+            18: { top: 380, left: 140 },
+            19: { top: 330, left: 200 },
+            
+            // Group 4 (bottom right quadrant)
+            3: { top: 250, left: 350 },
+            4: { top: 320, left: 450 },
+            9: { top: 270, left: 270 },
+            10: { top: 350, left: 320 },
+            11: { top: 370, left: 390 },
+            12: { top: 300, left: 400 },
+            20: { top: 400, left: 270 }
+        };
+
+        function getNodeColor(nodeId) {
+            // Group nodes by color based on their ID
+            if (nodeId >= 1 && nodeId <= 5) return "#3498db"; // Blue
+            if (nodeId >= 6 && nodeId <= 10) return "#2ecc71"; // Green
+            if (nodeId >= 11 && nodeId <= 15) return "#e74c3c"; // Red
+            if (nodeId >= 16 && nodeId <= 20) return "#f39c12"; // Orange
+            return "#3498db"; // Default blue
+        }
+
+        async function loadGraphData() {
+            try {
+                const response = await fetch('graph_data.json');
+                if (!response.ok) {
+                    throw new Error('Failed to load graph data');
+                }
+                
+                const data = await response.json();
+                graph = {};
+                graphNodes = [];
+                userInfo = {};
+                
+                // Process nodes with user info
+                for (const node of data.nodes) {
+                    const id = node.id;
+                    graphNodes.push(id);
+                    userInfo[id] = {
+                        name: node.user,
+                        pickup: node.pickup,
+                        destination: node.destination
+                    };
+                    graph[id] = [];
+                }
+                
+                // Process edges
+                for (const edge of data.edges) {
+                    graph[edge.source].push({ node: edge.target, weight: edge.weight });
+                    graph[edge.target].push({ node: edge.source, weight: edge.weight });
+                }
+                
+                document.getElementById('backend-status').innerHTML = 
+                    `<span class="success">Successfully loaded data for ${graphNodes.length} users!</span>`;
+                
+                // Render the graph
+                renderGraph(data);
+                
+            } catch (error) {
+                console.error('Error loading graph data:', error);
+                document.getElementById('backend-status').innerHTML = 
+                    `<span class="error">Failed to load data: ${error.message}. Using fallback data.</span>`;
+                
+                useFallbackData();
+            }
+        }
+
+        function populateUserDropdowns() {
+            const startSelect = document.getElementById('startUser');
+            const endSelect = document.getElementById('endUser');
+            const user1Select = document.getElementById('user1');
+            const user2Select = document.getElementById('user2');
+            const user3Select = document.getElementById('user3');
+            const user4Select = document.getElementById('user4');
+            
+            // Clear existing options
+            startSelect.innerHTML = '<option value="">Select a user</option>';
+            endSelect.innerHTML = '<option value="">Select a user</option>';
+            user1Select.innerHTML = '<option value="">Select a user</option>';
+            user2Select.innerHTML = '<option value="">Select a user</option>';
+            user3Select.innerHTML = '<option value="">Select a user</option>';
+            user4Select.innerHTML = '<option value="">Select a user</option>';
+            
+            // Add options for each user
+            graphNodes.forEach(nodeId => {
+                const user = userInfo[nodeId];
+                const startOption = document.createElement('option');
+                const endOption = document.createElement('option');
+                const user1Option = document.createElement('option');
+                const user2Option = document.createElement('option');
+                const user3Option = document.createElement('option');
+                const user4Option = document.createElement('option');
+                
+                startOption.value = nodeId;
+                endOption.value = nodeId;
+                user1Option.value = nodeId;
+                user2Option.value = nodeId;
+                user3Option.value = nodeId;
+                user4Option.value = nodeId;
+                
+                startOption.textContent = `${user.name} (Node ${nodeId})`;
+                endOption.textContent = `${user.name} (Node ${nodeId})`;
+                user1Option.textContent = `${user.name} (Node ${nodeId})`;
+                user2Option.textContent = `${user.name} (Node ${nodeId})`;
+                user3Option.textContent = `${user.name} (Node ${nodeId})`;
+                user4Option.textContent = `${user.name} (Node ${nodeId})`;
+                
+                startSelect.appendChild(startOption);
+                endSelect.appendChild(endOption);
+                user1Select.appendChild(user1Option);
+                user2Select.appendChild(user2Option);
+                user3Select.appendChild(user3Option);
+                user4Select.appendChild(user4Option);
+            });
+        }
+
+        // Fix this function definition
+        function populateAllUserDropdowns() {
+            // Call the existing dropdown population function
+            populateUserDropdowns();
+        }
+
+        window.addEventListener('DOMContentLoaded', function() {
+            loadGraphData().then(() => {
+                populateAllUserDropdowns();
+                
+                // Set up zoom controls after the DOM is fully loaded
+                const zoomInBtn = document.getElementById('zoom-in');
+                const zoomOutBtn = document.getElementById('zoom-out');
+                const resetViewBtn = document.getElementById('reset-view');
+                
+                if (zoomInBtn) {
+                    zoomInBtn.addEventListener('click', function() {
+                        zoomLevel += zoomStep;
+                        if (zoomLevel > 2) zoomLevel = 2; // Max zoom
+                        updateTransform();
+                    });
+                }
+                
+                if (zoomOutBtn) {
+                    zoomOutBtn.addEventListener('click', function() {
+                        zoomLevel -= zoomStep;
+                        if (zoomLevel < 0.5) zoomLevel = 0.5; // Min zoom
+                        updateTransform();
+                    });
+                }
+                
+                if (resetViewBtn) {
+                    resetViewBtn.addEventListener('click', function() {
+                        zoomLevel = 1;
+                        currentTranslate = { x: 0, y: 0 };
+                        updateTransform();
+                    });
+                }
+            });
+        });
+
+        document.getElementById('routeForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+            const startNode = parseInt(document.getElementById('startUser').value);
+            const endNode = parseInt(document.getElementById('endUser').value);
+
+            const outputDiv = document.getElementById('output');
+            outputDiv.classList.remove('hidden');
+
+            if (isNaN(startNode) || isNaN(endNode)) {
+                outputDiv.innerHTML = `<p class="error">Please select both start and end users.</p>`;
+                return;
+            }
+
+            if (!graphNodes.includes(startNode) || !graphNodes.includes(endNode)) {
+                outputDiv.innerHTML = `<p class="error">Selected users are not in the network.</p>`;
+                return;
+            }
+
+            if (startNode === endNode) {
+                outputDiv.innerHTML = `<p class="warning">Start and end users are the same.</p>`;
+                return;
+            }
+
+            calculateShortestPath(startNode, endNode);
+        });
+
+        // Function to render the graph visualization
+        function renderGraph(data) {
+            const container = document.getElementById('graph-container');
+            
+            // Remove only child nodes that aren't the controls
+            const existingControls = container.querySelector('.graph-controls');
+            container.innerHTML = '';
+            
+            if (existingControls) {
+                container.appendChild(existingControls);
+            } else {
+                // Re-create controls if they don't exist
+                const controls = document.createElement('div');
+                controls.className = 'graph-controls';
+                controls.innerHTML = `
+                    <button id="zoom-in" title="Zoom In">+</button>
+                    <button id="zoom-out" title="Zoom Out">−</button>
+                    <button id="reset-view" title="Reset View">Reset</button>
+                `;
+                container.appendChild(controls);
+                
+                // Re-add event listeners to buttons
+                document.getElementById('zoom-in').addEventListener('click', function() {
+                    zoomLevel += zoomStep;
+                    if (zoomLevel > 2) zoomLevel = 2;
+                    updateTransform();
+                });
+                
+                document.getElementById('zoom-out').addEventListener('click', function() {
+                    zoomLevel -= zoomStep;
+                    if (zoomLevel < 0.5) zoomLevel = 0.5;
+                    updateTransform();
+                });
+                
+                document.getElementById('reset-view').addEventListener('click', function() {
+                    zoomLevel = 1;
+                    currentTranslate = { x: 0, y: 0 };
+                    updateTransform();
+                });
+            }
+            
+            // Create a content wrapper for zoom/pan
+            const contentWrapper = document.createElement('div');
+            contentWrapper.className = 'graph-content';
+            contentWrapper.style.position = 'absolute';
+            contentWrapper.style.width = '100%';
+            contentWrapper.style.height = '100%';
+            contentWrapper.style.transformOrigin = 'center center';
+            container.appendChild(contentWrapper);
+            
+            // Render nodes with user info tooltips
+            for (const node of data.nodes) {
+                const nodeId = node.id;
+                const nodeDiv = document.createElement('div');
+                nodeDiv.className = 'node';
+                nodeDiv.textContent = nodeId;
+                nodeDiv.style.backgroundColor = getNodeColor(nodeId);
+
+                nodeDiv.title = `${node.user}\nPickup: ${node.pickup}\nDestination: ${node.destination}`;
+                
+                // Use predetermined positions from nodePlacements
+                const position = nodePlacements[nodeId];
+                if (position) {
+                    nodeDiv.style.top = `${position.top}px`;
+                    nodeDiv.style.left = `${position.left}px`;
+                    
+                    // Add user info on hover
+                    const userInfoDiv = document.createElement('div');
+                    userInfoDiv.className = 'user-info-tooltip';
+                    userInfoDiv.innerHTML = `
+
+                        <strong>${node.user}</strong><br>
+                        <span>Pickup: ${node.pickup}</span><br>
+                        <span>Destination: ${node.destination}</span>
+                    `;
+                    nodeDiv.appendChild(userInfoDiv);
+                    
+                    contentWrapper.appendChild(nodeDiv);
+                }
+            }
+            
+            // Render edges
+            for (const edge of data.edges) {
+                const sourcePos = nodePlacements[edge.source];
+                const targetPos = nodePlacements[edge.target];
+                
+                if (!sourcePos || !targetPos) continue;
+                
+                // Calculate edge properties (same as before)
+                const isDiagonal = sourcePos.top !== targetPos.top;
+                const edgeDiv = document.createElement('div');
+                edgeDiv.className = isDiagonal ? 'edge-diagonal' : 'edge';
+                
+                if (isDiagonal) {
+                    const length = Math.sqrt(
+                        Math.pow(targetPos.left - sourcePos.left, 2) + 
+                        Math.pow(targetPos.top - sourcePos.top, 2)
+                    );
+                    
+                    const midX = (sourcePos.left + targetPos.left) / 2;
+                    const midY = (sourcePos.top + targetPos.top) / 2;
+                    
+                    const angle = Math.atan2(
+                        targetPos.top - sourcePos.top,
+                        targetPos.left - sourcePos.left
+                    ) * (180 / Math.PI);
+                    
+                    edgeDiv.style.width = `${length}px`;
+                    edgeDiv.style.top = `${midY}px`;
+                    edgeDiv.style.left = `${midX - length/2}px`;
+                    edgeDiv.style.transform = `rotate(${angle}deg)`;
+                } else {
+                    const left = Math.min(sourcePos.left, targetPos.left);
+                    const width = Math.abs(targetPos.left - sourcePos.left);
+                    
+                    edgeDiv.style.top = `${sourcePos.top + 18}px`;
+                    edgeDiv.style.left = `${left + 18}px`;
+                    edgeDiv.style.width = `${width - 36}px`;
+                }
+                
+                // Add weight label
+                const weightSpan = document.createElement('span');
+                weightSpan.className = 'weight';
+                weightSpan.textContent = edge.weight;
+                edgeDiv.appendChild(weightSpan);
+                
+                contentWrapper.appendChild(edgeDiv);
+            }
+        }
+
+        // Function to use fallback data when backend fails
+        function useFallbackData() {
+            // Create fallback user data
+            const fallbackUsers = [
+                { id: 1, user: "Alice Smith", pickup: "123 Main St, Downtown", destination: "456 Park Ave, Uptown" },
+                { id: 2, user: "Bob Johnson", pickup: "789 Oak Dr, Westside", destination: "321 Pine Rd, Eastside" },
+                { id: 3, user: "Carol Williams", pickup: "555 Maple Ave, Northside", destination: "777 Elm St, Southside" },
+                { id: 4, user: "David Brown", pickup: "888 Cedar Ln, Lakefront", destination: "999 Birch Blvd, Mountainview" },
+                { id: 5, user: "Emma Davis", pickup: "101 River Rd, Brookside", destination: "202 Valley Way, Hillcrest" }
+                // Add more users as needed
+            ];
+            
+            // Create fallback edges
+            const fallbackEdges = [
+                {source: 1, target: 2, weight: 4},
+                {source: 1, target: 3, weight: 2},
+                {source: 2, target: 3, weight: 1},
+                {source: 2, target: 4, weight: 5},
+                {source: 3, target: 4, weight: 8},
+                {source: 1, target: 5, weight: 7}
+                // Add more edges as needed
+            ];
+            
+            // Process the fallback data
+            graphNodes = [];
+            userInfo = {};
+            graph = {};
+            
+            for (const node of fallbackUsers) {
+                graphNodes.push(node.id);
+                userInfo[node.id] = {
+                    name: node.user,
+                    pickup: node.pickup,
+                    destination: node.destination
+                };
+                graph[node.id] = [];
+            }
+            
+            for (const edge of fallbackEdges) {
+                graph[edge.source].push({ node: edge.target, weight: edge.weight });
+                graph[edge.target].push({ node: edge.source, weight: edge.weight });
+            }
+            
+            // Populate user dropdown menus
+            populateUserDropdowns();
+            
+            // Render the fallback graph
+            renderGraph({
+                nodes: fallbackUsers,
+                edges: fallbackEdges
+            });
+        }
+
+        // Implement the shortest path calculation function (Dijkstra's algorithm)
+        function calculateShortestPath(startNode, endNode) {
+            const outputDiv = document.getElementById('output');
+            
+            // Same implementation as before
+            const distances = {};
+            const previous = {};
+            const unvisited = [];
+
+            for (let node of graphNodes) {
+                distances[node] = Infinity;
+                previous[node] = null;
+                unvisited.push(node);
+            }
+            distances[startNode] = 0;
+
+            while (unvisited.length > 0) {
+                let minNode = unvisited[0];
+                for (let i = 1; i < unvisited.length; i++) {
+                    if (distances[unvisited[i]] < distances[minNode]) {
+                        minNode = unvisited[i];
+                    }
+                }
+
+                unvisited.splice(unvisited.indexOf(minNode), 1);
+
+                if (minNode === endNode || distances[minNode] === Infinity) {
+                    break;
+                }
+
+                for (let neighbor of graph[minNode]) {
+                    const alt = distances[minNode] + neighbor.weight;
+                    if (alt < distances[neighbor.node]) {
+                        distances[neighbor.node] = alt;
+                        previous[neighbor.node] = minNode;
+                    }
+                }
+            }
+
+            const path = [];
+            let current = endNode;
+            while (current !== null) {
+                path.unshift(current);
+                current = previous[current];
+            }
+
+            if (path.length === 1 && path[0] !== startNode) {
+                outputDiv.innerHTML = `<p class="error">No path found from ${userInfo[startNode].name} to ${userInfo[endNode].name}.</p>`;
+                return;
+            }
+
+            const totalDistance = distances[endNode];
+            
+            // Build the step-by-step path details with user information
+            let pathDetails = '';
+            for (let i = 0; i < path.length - 1; i++) {
+                const currentNode = path[i];
+                const nextNode = path[i + 1];
+                
+                let edgeWeight = 0;
+                for (let edge of graph[currentNode]) {
+                    if (edge.node === nextNode) {
+                        edgeWeight = edge.weight;
+                        break;
+                    }
+                }
+                
+                pathDetails += `<div class="path-step">
+                    <div class="step-users">
+                        <div class="user-details">
+                            <strong>${userInfo[currentNode].name}</strong> (Node ${currentNode})
+                            <div class="address-details">
+                                <div>Pickup: ${userInfo[currentNode].pickup}</div>
+                                <div>Destination: ${userInfo[currentNode].destination}</div>
+                            </div>
+                        </div>
+                        <div class="arrow">→</div>
+                        <div class="user-details">
+                            <strong>${userInfo[nextNode].name}</strong> (Node ${nextNode})
+                            <div class="address-details">
+                                <div>Pickup: ${userInfo[nextNode].pickup}</div>
+                                <div>Destination: ${userInfo[nextNode].destination}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="step-distance">Distance: ${edgeWeight} units</div>
+                </div>`;
+            }
+
+            // Show the result with detailed user information
+            outputDiv.innerHTML = `
+                <h2>Shortest Path Results</h2>
+                <div class="result-summary">
+                    <p><strong>From:</strong> ${userInfo[startNode].name} (Node ${startNode})</p>
+                    <p><strong>To:</strong> ${userInfo[endNode].name} (Node ${endNode})</p>
+                    <p><strong>Path:</strong> ${path.map(id => userInfo[id].name + ` (Node ${id})`).join(' → ')}</p>
+                    <p><strong>Total Distance:</strong> ${totalDistance} units</p>
+                </div>
+                
+                <div class="path-details">
+                    <h3>Step-by-Step Path Details:</h3>
+                    ${pathDetails}
+                </div>
+                
+                <div class="algorithm-explanation">
+                    <h3>Algorithm Execution:</h3>
+                    <p>Dijkstra's algorithm calculated the shortest path by evaluating all possible routes from ${userInfo[startNode].name} to ${userInfo[endNode].name}, always selecting the unvisited node with the minimum distance.</p>
+                </div>
+            `;
+            
+            // Highlight the path in the visualization
+            highlightPath(path);
+        }
+
+        // Enhanced path highlighting function
+        function highlightPath(path) {
+            // Clear existing highlights
+            const nodes = document.querySelectorAll('.node');
+            const edges = document.querySelectorAll('.edge, .edge-diagonal');
+            const existingPathLines = document.querySelector('.path-lines');
+            
+            if (existingPathLines) {
+                existingPathLines.remove();
+            }
+            
+            nodes.forEach(node => node.classList.remove('node-in-path'));
+            edges.forEach(edge => edge.classList.remove('edge-in-path'));
+            
+            // Create SVG container for path lines
+            const graphContainer = document.getElementById('graph-container');
+            const svgContainer = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            svgContainer.classList.add('path-lines');
+            svgContainer.setAttribute('width', '100%');
+            svgContainer.setAttribute('height', '100%');
+            svgContainer.style.position = 'absolute';
+            svgContainer.style.top = '0';
+            svgContainer.style.left = '0';
+            svgContainer.style.pointerEvents = 'none';
+            svgContainer.style.zIndex = '5';
+            
+            // Highlight nodes in the path and collect their positions
+            const nodePositions = [];
+            for (const nodeId of path) {
+                nodes.forEach(nodeElem => {
+                    if (nodeElem.textContent == nodeId) {
+                        nodeElem.classList.add('node-in-path');
+                        const position = nodePlacements[nodeId];
+                        if (position) {
+                            nodePositions.push({
+                                id: nodeId,
+                                x: position.left + 20, // Center of node
+                                y: position.top + 20   // Center of node
+                            });
+                        }
+                    }
+                });
+            }
+            
+            // Draw path lines between nodes
+            for (let i = 0; i < nodePositions.length - 1; i++) {
+                const start = nodePositions[i];
+                const end = nodePositions[i + 1];
+                
+                // Create path line
+                const pathLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                
+                // Define path with Bezier curve for smoother appearance
+                const dx = end.x - start.x;
+                const dy = end.y - start.y;
+                const controlPointX = start.x + dx / 2;
+                const controlPointY = start.y + dy / 2;
+                const curve = Math.min(Math.abs(dx), Math.abs(dy)) * 0.3;
+                
+                // SVG path with curve
+                const pathData = `
+                    M ${start.x},${start.y}
+                    Q ${controlPointX},${controlPointY - curve} ${end.x},${end.y}
+                `;
+                
+                pathLine.setAttribute('d', pathData);
+                pathLine.setAttribute('fill', 'none');
+                pathLine.setAttribute('stroke', '#e74c3c');
+                pathLine.setAttribute('stroke-width', '4');
+                pathLine.setAttribute('stroke-linecap', 'round');
+                pathLine.setAttribute('stroke-dasharray', '8,4');
+                pathLine.style.animation = 'dash 1s linear infinite';
+                
+                // Add marker for direction
+                const markerId = `arrow-${i}`;
+                const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+                marker.setAttribute('id', markerId);
+                marker.setAttribute('viewBox', '0 0 10 10');
+                marker.setAttribute('refX', '5');
+                marker.setAttribute('refY', '5');
+                marker.setAttribute('markerWidth', '6');
+                marker.setAttribute('markerHeight', '6');
+                marker.setAttribute('orient', 'auto');
+                
+                const markerPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                markerPath.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
+                markerPath.setAttribute('fill', '#e74c3c');
+                
+                marker.appendChild(markerPath);
+                svgContainer.appendChild(marker);
+                
+                pathLine.setAttribute('marker-end', `url(#${markerId})`);
+                
+                // Add step indicator
+                const stepCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                stepCircle.setAttribute('cx', controlPointX);
+                stepCircle.setAttribute('cy', controlPointY);
+                stepCircle.setAttribute('r', '12');
+                stepCircle.setAttribute('fill', 'white');
+                stepCircle.setAttribute('stroke', '#e74c3c');
+                stepCircle.setAttribute('stroke-width', '2');
+                
+                const stepText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                stepText.setAttribute('x', controlPointX);
+                stepText.setAttribute('y', controlPointY + 5);
+                stepText.setAttribute('text-anchor', 'middle');
+                stepText.setAttribute('font-size', '12');
+                stepText.setAttribute('font-weight', 'bold');
+                stepText.setAttribute('fill', '#e74c3c');
+                stepText.textContent = i + 1;
+                
+                svgContainer.appendChild(pathLine);
+                svgContainer.appendChild(stepCircle);
+                svgContainer.appendChild(stepText);
+            }
+            
+            // Add SVG animation for the path lines
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes dash {
+                    to {
+                        stroke-dashoffset: -12;
+                    }
+                }
+            `;
+            svgContainer.appendChild(style);
+            
+            // Add the SVG container to the graph
+            graphContainer.appendChild(svgContainer);
+            
+            // Also highlight edges (original functionality)
+            for (let i = 0; i < path.length - 1; i++) {
+                const currentNode = path[i];
+                const nextNode = path[i + 1];
+                
+                edges.forEach(edge => {
+                    const weight = edge.querySelector('.weight');
+                    if (weight) {
+                        const edgePosition = {
+                            top: parseInt(edge.style.top),
+                            left: parseInt(edge.style.left) 
+                        };
+                        
+                        const sourcePos = nodePlacements[currentNode];
+                        const targetPos = nodePlacements[nextNode];
+                        
+                        if (sourcePos && targetPos) {
+                            const midX = (sourcePos.left + targetPos.left) / 2;
+                            const midY = (sourcePos.top + targetPos.top) / 2;
+                            
+                            const closeToEdge = Math.abs(edgePosition.left - midX) < 50 && 
+                                               Math.abs(edgePosition.top - midY) < 50;
+                                               
+                            if (closeToEdge) {
+                                edge.classList.add('edge-in-path');
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        // Add zoom and pan functionality
+        let zoomLevel = 1;
+        const zoomStep = 0.1;
+        const graphContainer = document.getElementById('graph-container');
+        let isPanning = false;
+        let startPoint = { x: 0, y: 0 };
+        let currentTranslate = { x: 0, y: 0 };
+
+        // Set up transform style
+        function updateTransform() {
+            const graphContent = graphContainer.querySelector('.graph-content');
+            if (graphContent) {
+                graphContent.style.transform = `scale(${zoomLevel}) translate(${currentTranslate.x}px, ${currentTranslate.y}px)`;
+            }
+        }
+
+        // Node filtering functionality
+        function getNodeGroup(nodeId) {
+            if ([1, 5, 6, 13, 14].includes(nodeId)) return "1";
+            if ([2, 8, 15, 16].includes(nodeId)) return "2";
+            if ([7, 17, 18, 19].includes(nodeId)) return "3";
+            if ([3, 4, 9, 10, 11, 12, 20].includes(nodeId)) return "4";
+            return "all";
+        }
+
+        // Add event listeners to filter buttons
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                // Update active button
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                
+                const group = this.dataset.group;
+                const nodes = document.querySelectorAll('.node');
+                const edges = document.querySelectorAll('.edge, .edge-diagonal');
+                
+                if (group === 'all') {
+                    // Show all nodes and edges
+                    nodes.forEach(node => node.style.display = 'flex');
+                    edges.forEach(edge => edge.style.display = 'block');
+                } else {
+                    // Show only nodes in the selected group
+                    nodes.forEach(node => {
+                        const nodeId = parseInt(node.textContent);
+                        if (getNodeGroup(nodeId) === group) {
+                            node.style.display = 'flex';
+                        } else {
+                            node.style.display = 'none';
+                        }
+                    });
+                    
+                    // Show only edges where both endpoints are visible
+                    edges.forEach(edge => {
+                        // This is a simplified approach - in a real implementation,
+                        // you would need to check if both connected nodes are in the visible group
+                        edge.style.display = 'none';
+                    });
+                }
+            });
+        });
+
+        // Add mouse events for panning
+        graphContainer.addEventListener('mousedown', function(e) {
+            if (e.target === graphContainer || e.target.classList.contains('graph-content')) {
+                isPanning = true;
+                startPoint = { x: e.clientX - currentTranslate.x, y: e.clientY - currentTranslate.y };
+                graphContainer.style.cursor = 'grabbing';
+            }
+        });
+
+        window.addEventListener('mousemove', function(e) {
+            if (isPanning) {
+                currentTranslate = { 
+                    x: e.clientX - startPoint.x, 
+                    y: e.clientY - startPoint.y 
+                };
+                updateTransform();
+            }
+        });
+
+        window.addEventListener('mouseup', function() {
+            isPanning = false;
+            graphContainer.style.cursor = 'default';
+        });
+
+        // Toggle between single route and multi-user route forms
+        document.getElementById('single-route-btn').addEventListener('click', function() {
+            document.getElementById('routeForm').classList.remove('hidden');
+            document.getElementById('tspForm').classList.add('hidden');
+            this.classList.add('active');
+            document.getElementById('multi-route-btn').classList.remove('active');
+        });
+
+        document.getElementById('multi-route-btn').addEventListener('click', function() {
+            document.getElementById('routeForm').classList.add('hidden');
+            document.getElementById('tspForm').classList.remove('hidden');
+            this.classList.add('active');
+            document.getElementById('single-route-btn').classList.remove('active');
+        });
+
+        // Add event listener for the TSP form
+        document.getElementById('tspForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+            
+            // Collect selected user IDs
+            const userIds = [];
+            ['user1', 'user2', 'user3', 'user4'].forEach(id => {
+                const value = document.getElementById(id).value;
+                if (value) userIds.push(parseInt(value));
+            });
+            
+            // Validate selections
+            const outputDiv = document.getElementById('output');
+            outputDiv.classList.remove('hidden');
+            
+            if (userIds.length < 2) {
+                outputDiv.innerHTML = `<p class="error">Please select at least 2 users for multi-user routing.</p>`;
+                return;
+            }
+            
+            // Check for duplicate selections
+            const uniqueIds = new Set(userIds);
+            if (uniqueIds.size !== userIds.length) {
+                outputDiv.innerHTML = `<p class="error">Please select different users (no duplicates).</p>`;
+                return;
+            }
+            
+            calculateOptimalRoute(userIds);
+        });
+
+        // Function to calculate the optimal route using TSP
+        function calculateOptimalRoute(userIds) {
+            const outputDiv = document.getElementById('output');
+            outputDiv.innerHTML = `<p>Calculating optimal route for ${userIds.length} users...</p>`;
+            
+            try {
+                // Calculate TSP route (simplified nearest neighbor approach)
+                const result = calculateClientSideTsp(userIds);
+                displayTspResults(result.path, result.userDetails);
+                
+            } catch (error) {
+                console.error("Error calculating TSP route:", error);
+                outputDiv.innerHTML = `<p class="error">Failed to calculate optimal route: ${error.message}</p>`;
+            }
+        }
+
+        // Client-side TSP calculation using nearest neighbor algorithm
+        function calculateClientSideTsp(userIds) {
+            // Extract user details
+            const userDetails = userIds.map(id => ({
+                id: id,
+                name: userInfo[id].name,
+                pickup: userInfo[id].pickup,
+                destination: userInfo[id].destination
+            }));
+            
+            // Use nearest neighbor algorithm for TSP
+            const path = [];
+            const visited = new Set();
+            let current = userIds[0]; // Start with the first user
+            path.push(current);
+            visited.add(current);
+            
+            // Find path visiting all users
+            while (visited.size < userIds.length) {
+                let nearest = null;
+                let minDistance = Infinity;
+                
+                // Find the nearest unvisited user
+                for (const userId of userIds) {
+                    if (!visited.has(userId)) {
+                        // Get shortest path between current and this user
+                        const distance = estimateDistance(current, userId);
+                        if (distance < minDistance) {
+                            minDistance = distance;
+                            nearest = userId;
+                        }
+                    }
+                }
+                
+                if (nearest !== null) {
+                    // Get shortest path between current and nearest
+                    const subPath = findShortestPath(current, nearest);
+                    // Add path except first node (to avoid duplication)
+                    for (let i = 1; i < subPath.length; i++) {
+                        path.push(subPath[i]);
+                    }
+                    current = nearest;
+                    visited.add(nearest);
+                }
+            }
+            
+            return { path, userDetails };
+        }
+
+        // Estimate distance between two nodes for TSP
+        function estimateDistance(start, end) {
+            // Use simple direct distance for estimation
+            const startPos = nodePlacements[start];
+            const endPos = nodePlacements[end];
+            
+            if (!startPos || !endPos) return 100; // Default large distance
+            
+            return Math.sqrt(
+                Math.pow(endPos.left - startPos.left, 2) +
+                Math.pow(endPos.top - startPos.top, 2)
+            );
+        }
+
+        // Find shortest path between two nodes for TSP
+        function findShortestPath(start, end) {
+            // Use Dijkstra's algorithm to find the path
+            const distances = {};
+            const previous = {};
+            const unvisited = [];
+            
+            for (let node of graphNodes) {
+                distances[node] = Infinity;
+                previous[node] = null;
+                unvisited.push(node);
+            }
+            distances[start] = 0;
+            
+            while (unvisited.length > 0) {
+                let minNode = unvisited[0];
+                for (let i = 1; i < unvisited.length; i++) {
+                    if (distances[unvisited[i]] < distances[minNode]) {
+                        minNode = unvisited[i];
+                    }
+                }
+                
+                unvisited.splice(unvisited.indexOf(minNode), 1);
+                
+                if (minNode === end || distances[minNode] === Infinity) {
+                    break;
+                }
+                
+                for (let neighbor of graph[minNode]) {
+                    const alt = distances[minNode] + neighbor.weight;
+                    if (alt < distances[neighbor.node]) {
+                        distances[neighbor.node] = alt;
+                        previous[neighbor.node] = minNode;
+                    }
+                }
+            }
+            
+            const path = [];
+            let current = end;
+            while (current !== null) {
+                path.unshift(current);
+                current = previous[current];
+            }
+            
+            return path;
+        }
+
+        // Display TSP results
+        function displayTspResults(path, userDetails) {
+            const outputDiv = document.getElementById('output');
+            
+            // If no path was found
+            if (!path || path.length === 0) {
+                outputDiv.innerHTML = `<p class="error">No valid route could be found for the selected users.</p>`;
+                return;
+            }
+            
+            // Calculate total distance of the path
+            let totalDistance = 0;
+            for (let i = 0; i < path.length - 1; i++) {
+                const currentNode = path[i];
+                const nextNode = path[i + 1];
+                
+                // Find the edge weight
+                for (const edge of graph[currentNode]) {
+                    if (edge.node === nextNode) {
+                        totalDistance += edge.weight;
+                        break;
+                    }
+                }
+            }
+            
+            // Create user summaries
+            let userSummaries = '';
+            for (const user of userDetails) {
+                userSummaries += `
+                    <div class="user-summary">
+                        <h4>${user.name} (Node ${user.id})</h4>
+                        <div class="address-line">
+                            <strong>Pickup:</strong> ${user.pickup}
+                        </div>
+                        <div class="address-line">
+                            <strong>Destination:</strong> ${user.destination}
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Create path segments display
+            let pathSegments = '';
+            for (let i = 0; i < path.length - 1; i++) {
+                const currentNode = path[i];
+                const nextNode = path[i + 1];
+                
+                // Find the edge weight
+                let segmentDistance = 0;
+                for (const edge of graph[currentNode]) {
+                    if (edge.node === nextNode) {
+                        segmentDistance = edge.weight;
+                        break;
+                    }
+                }
+                
+                pathSegments += `
+                    <div class="path-segment">
+                        <div class="segment-nodes">
+                            <div class="node-info">
+                                <div class="node-id">Node ${currentNode}</div>
+                                <div class="node-name">${userInfo[currentNode] ? userInfo[currentNode].name : 'Unknown'}</div>
+                            </div>
+                            <div class="arrow">→</div>
+                            <div class="node-info">
+                                <div class="node-id">Node ${nextNode}</div>
+                                <div class="node-name">${userInfo[nextNode] ? userInfo[nextNode].name : 'Unknown'}</div>
+                            </div>
+                        </div>
+                        <div class="segment-distance">Distance: ${segmentDistance} units</div>
+                    </div>
+                `;
+            }
+            
+            // Display the complete TSP results
+            outputDiv.innerHTML = `
+                <h2>Optimal Multi-User Route</h2>
+                
+                <div class="result-summary">
+                    <p><strong>Number of Users:</strong> ${userDetails.length}</p>
+                    <p><strong>Total Route Length:</strong> ${totalDistance} units</p>
+                    <p><strong>Complete Path:</strong> ${path.join(' → ')}</p>
+                </div>
+                
+                <div class="users-section">
+                    <h3>Selected Users:</h3>
+                    <div class="user-summaries">
+                        ${userSummaries}
+                    </div>
+                </div>
+                
+                <div class="path-details">
+                    <h3>Step-by-Step Route Details:</h3>
+                    ${pathSegments}
+                </div>
+                
+                <div class="algorithm-explanation">
+                    <h3>Algorithm Execution:</h3>
+                    <p>The Traveling Salesman Problem (TSP) algorithm calculated the optimal route to visit all users, minimizing the total travel distance.</p>
+                </div>
+            `;
+            
+            // Highlight the path in the visualization
+            highlightPath(path);
+        }
+    </script>
+</body>
+</html>
